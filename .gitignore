@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 test-results/
 playwright-report/
+.env
+*.db
+.pytest_cache/

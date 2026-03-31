@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from routes.pipeline import router as pipeline_router
 from routes.repo import router as repo_router
 
 app: FastAPI = FastAPI(title="FV Pipeline Demo")
@@ -15,6 +16,7 @@ app.add_middleware(
 )
 
 app.include_router(repo_router, prefix="/api")
+app.include_router(pipeline_router, prefix="/api")
 
 
 @app.get("/health")

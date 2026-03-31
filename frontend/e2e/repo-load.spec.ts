@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-const ALF_LOGIC_PATH = "/Users/alexfetisov/dev/alf-logic";
+const ALF_LOGIC_PATH = "/Users/alexfetisov/dev/showcase-example";
 
 test.describe("Repository Loading", () => {
   test("loads alf-logic repo and displays all 10 functions", async ({ page }) => {
@@ -22,7 +22,7 @@ test.describe("Repository Loading", () => {
     await expect(fileTree).toBeVisible({ timeout: 15000 });
 
     // Verify repo name is shown
-    await expect(fileTree).toContainText("alf-logic");
+    await expect(fileTree).toContainText("showcase-example");
 
     // Verify function count
     await expect(fileTree).toContainText("10 functions found");
