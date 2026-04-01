@@ -176,16 +176,18 @@ function PipelineView({
   const [conversations, setConversations] = useState<Record<string, any[]>>({});
   const [gitOps, setGitOps] = useState<any[]>([]);
   const [agentFn, setAgentFn] = useState("");
+  const [pipelineResults, setPipelineResults] = useState<Record<string, { spec_text: string | null; test_code: string | null; test_output: string | null }>>({});
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  // Fetch debug data when pipeline completes
+  // Fetch debug data + results when pipeline completes
   useEffect(() => {
     if (!pipelineComplete || !runId) return;
     (async () => {
       try {
-        const [convRes, gitRes] = await Promise.all([
+        const [convRes, gitRes, resultsRes] = await Promise.all([
           fetch(`${BACKEND_URL}/api/debug/conversations/${runId}`),
           fetch(`${BACKEND_URL}/api/debug/git-graph/${runId}`),
+          fetch(`${BACKEND_URL}/api/pipeline/results/${runId}`),
         ]);
         if (convRes.ok) {
           const data = await convRes.json();
@@ -196,6 +198,18 @@ function PipelineView({
         if (gitRes.ok) {
           const data = await gitRes.json();
           setGitOps(data.operations);
+        }
+        if (resultsRes.ok) {
+          const data = await resultsRes.json();
+          const results: Record<string, { spec_text: string | null; test_code: string | null; test_output: string | null }> = {};
+          for (const fn of data.functions) {
+            results[fn.name] = {
+              spec_text: fn.spec_text,
+              test_code: fn.test_code,
+              test_output: fn.test_output,
+            };
+          }
+          setPipelineResults(results);
         }
       } catch (err) {
         console.error("Failed to fetch debug data:", err);
@@ -389,18 +403,37 @@ function PipelineView({
             className="flex-1 overflow-auto bg-gray-950"
             data-testid="code-panel"
           >
-            {sourceCode && codeTab === "source" ? (
-              <CodeViewer code={sourceCode} />
+            {codeTab === "source" ? (
+              sourceCode ? (
+                <CodeViewer code={sourceCode} />
+              ) : (
+                <div className="p-4 text-gray-500 text-sm">
+                  Select a function from the file tree to view its source code.
+                </div>
+              )
             ) : codeTab === "tests" ? (
-              <div className="p-4 text-gray-500 text-sm">
-                No tests generated yet. Click &quot;Generate Specs&quot; to
-                start the pipeline.
-              </div>
-            ) : (
-              <div className="p-4 text-gray-500 text-sm">
-                Select a function from the file tree to view its source code.
-              </div>
-            )}
+              pipelineResults[selected]?.test_code ? (
+                <div>
+                  <CodeViewer code={pipelineResults[selected].test_code!} />
+                  {pipelineResults[selected]?.test_output && (
+                    <div className="border-t border-gray-800 bg-gray-900/30 p-3" data-testid="test-output">
+                      <div className="text-xs text-gray-500 mb-1 font-semibold uppercase tracking-wide">Test Output</div>
+                      <pre className={`text-xs font-mono whitespace-pre-wrap ${
+                        pipelineResults[selected].test_output!.includes("passed") ? "text-green-400" : "text-red-400"
+                      }`}>
+                        {pipelineResults[selected].test_output}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-4 text-gray-500 text-sm">
+                  {pipelineComplete
+                    ? "No tests generated for this function."
+                    : "No tests generated yet. Click \"Generate Specs\" to start the pipeline."}
+                </div>
+              )
+            ) : null}
           </div>
         </div>
       </div>
