@@ -12,7 +12,7 @@ from typing import Any
 
 from db import DB
 from git_model import GitModel
-from llm import BudgetExceededError, LLMClient
+from llm import BudgetExceededError, LLMClient, MockLLMClient
 
 from agents.spec_gen import run_l1
 from agents.spec_refine import run_l2
@@ -130,10 +130,13 @@ def run_pipeline(
     db: DB,
     run_id: str,
     clone_path: str,
-    model: str = "gpt-4o-mini",
+    model: str = "mock",
     on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, str]:
     """Run the full pipeline on all functions in the repo.
+
+    Use model="mock" (default) for deterministic predefined responses.
+    Use model="gpt-4o-mini" or other for real OpenAI API calls.
 
     Returns a dict of function_name → final_status.
     """
@@ -142,7 +145,11 @@ def run_pipeline(
             on_event(event)
 
     clone: Path = Path(clone_path)
-    llm: LLMClient = LLMClient(model=model)
+    llm: LLMClient | MockLLMClient
+    if model == "mock":
+        llm = MockLLMClient()
+    else:
+        llm = LLMClient(model=model)
     git: GitModel = GitModel(db, run_id)
 
     db.update_run_status(run_id, "running")

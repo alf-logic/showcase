@@ -44,6 +44,79 @@ def _calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     return input_cost + output_cost
 
 
+class MockLLMClient:
+    """Deterministic mock that returns predefined responses. No API calls."""
+
+    def __init__(self, model: str = "mock") -> None:
+        self.model: str = model
+        self._call_count: int = 0
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+    ) -> LLMResponse:
+        """Return predefined response based on the user message content."""
+        from mock_responses import get_mock_response
+
+        user_msg: str = ""
+        for msg in messages:
+            if msg["role"] == "user":
+                user_msg = msg["content"]
+                break
+
+        # Extract function name from the user message
+        function_name: str = self._extract_function_name(user_msg)
+
+        # Determine layer from system message
+        system_msg: str = ""
+        for msg in messages:
+            if msg["role"] == "system":
+                system_msg = msg["content"]
+                break
+
+        if "specification agent" in system_msg.lower() or "spec generation" in system_msg.lower():
+            layer = "l1"
+        elif "specification reviewer" in system_msg.lower() or "review" in system_msg.lower():
+            layer = "l2"
+        elif "test generation" in system_msg.lower():
+            layer = "l3"
+        else:
+            layer = "l1"
+
+        content: str = get_mock_response(function_name, layer)
+        if not content:
+            content = f"Feature: {function_name}\n  Scenario: placeholder\n    When called\n    Then it works"
+
+        self._call_count += 1
+        output_tokens: int = len(content.split())
+        return LLMResponse(
+            content=content,
+            model=self.model,
+            input_tokens=200,
+            output_tokens=output_tokens,
+            total_tokens=200 + output_tokens,
+            cost_usd=0.0001,
+        )
+
+    def _extract_function_name(self, user_msg: str) -> str:
+        """Extract function name from user message."""
+        # Pattern: "for `function_name` from" or "for `function_name`"
+        import re
+        match = re.search(r'`(\w+)`\s+from', user_msg)
+        if match:
+            return match.group(1)
+        match = re.search(r'`(\w+)`', user_msg)
+        if match:
+            return match.group(1)
+        # Fallback: look for "def function_name"
+        match = re.search(r'def (\w+)\(', user_msg)
+        if match:
+            return match.group(1)
+        return "unknown"
+
+
 class LLMClient:
     """OpenAI chat completion client with budget tracking."""
 
