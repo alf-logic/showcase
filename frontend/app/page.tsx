@@ -339,7 +339,7 @@ function PipelineView({
             </span>
           )}
           {pipelineComplete && (
-            <span className="text-xs text-green-400" data-testid="pipeline-complete">
+            <span className="text-xs text-green-400" data-testid="pipeline-complete" data-run-id={runId || ""}>
               Pipeline complete
             </span>
           )}
