@@ -1,111 +1,63 @@
 "use client";
 
 import { useState } from "react";
+import { FileTree, FileNode } from "@/components/FileTree";
+import { CodeViewer } from "@/components/CodeViewer";
+import { StatusTable, FunctionStatus } from "@/components/StatusTable";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
-interface FunctionInfo {
-  name: string;
-  file: string;
-  line: number;
-  args: string[];
+function flattenFunctions(nodes: FileNode[]): FunctionStatus[] {
+  const result: FunctionStatus[] = [];
+  for (const node of nodes) {
+    if (node.functions) {
+      for (const fn of node.functions) {
+        result.push({
+          name: fn.name,
+          file: fn.file,
+          line: fn.line,
+          status: "pending",
+          l1: "pending",
+          l2: "pending",
+          l3: "pending",
+          action: "pending",
+        });
+      }
+    }
+    if (node.children) {
+      result.push(...flattenFunctions(node.children));
+    }
+  }
+  return result;
 }
 
-interface FileNode {
-  name: string;
-  path: string;
-  type: "file" | "directory";
-  children?: FileNode[];
-  functions?: FunctionInfo[];
+function countFunctions(nodes: FileNode[]): number {
+  let count = 0;
+  for (const node of nodes) {
+    if (node.functions) count += node.functions.length;
+    if (node.children) count += countFunctions(node.children);
+  }
+  return count;
 }
 
-function FileTree({ nodes, depth = 0 }: { nodes: FileNode[]; depth?: number }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+// ============================================================
+// Repo Input View
+// ============================================================
 
-  const toggle = (path: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  };
-
-  return (
-    <div>
-      {nodes.map((node) => (
-        <div key={node.path}>
-          <div
-            className={`flex items-center gap-2 py-1 px-2 hover:bg-gray-800 rounded cursor-pointer text-sm font-mono`}
-            style={{ paddingLeft: `${depth * 16 + 8}px` }}
-            onClick={() => node.type === "directory" && toggle(node.path)}
-          >
-            {node.type === "directory" ? (
-              <span className="text-gray-500 w-4 text-center">
-                {expanded.has(node.path) ? "v" : ">"}
-              </span>
-            ) : (
-              <span className="text-gray-600 w-4 text-center">-</span>
-            )}
-            <span
-              className={
-                node.type === "directory"
-                  ? "text-blue-400 font-semibold"
-                  : "text-gray-300"
-              }
-            >
-              {node.name}
-            </span>
-            {node.functions && node.functions.length > 0 && (
-              <span className="text-gray-600 text-xs ml-auto">
-                {node.functions.length} fn
-              </span>
-            )}
-          </div>
-
-          {node.type === "directory" &&
-            expanded.has(node.path) &&
-            node.children && (
-              <FileTree nodes={node.children} depth={depth + 1} />
-            )}
-
-          {node.type === "file" &&
-            node.functions &&
-            node.functions.map((fn) => (
-              <div
-                key={`${node.path}:${fn.name}`}
-                className="flex items-center gap-2 py-0.5 px-2 text-sm font-mono"
-                style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}
-              >
-                <span className="text-purple-400">def</span>
-                <span className="text-yellow-300">{fn.name}</span>
-                <span className="text-gray-500">
-                  ({fn.args.join(", ")})
-                </span>
-                <span className="text-gray-700 text-xs ml-auto">
-                  L{fn.line}
-                </span>
-              </div>
-            ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export default function Home() {
+function RepoInput({
+  onLoaded,
+}: {
+  onLoaded: (tree: FileNode[], repoName: string) => void;
+}) {
   const [repoUrl, setRepoUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [tree, setTree] = useState<FileNode[] | null>(null);
-  const [repoName, setRepoName] = useState<string | null>(null);
 
   const handleLoad = async () => {
     if (!repoUrl.trim()) return;
     setLoading(true);
     setError(null);
-    setTree(null);
-
     try {
       const res = await fetch(`${BACKEND_URL}/api/repo/load`, {
         method: "POST",
@@ -117,8 +69,7 @@ export default function Home() {
         throw new Error(data.detail || `HTTP ${res.status}`);
       }
       const data = await res.json();
-      setTree(data.tree);
-      setRepoName(data.repo_name);
+      onLoaded(data.tree, data.repo_name);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -132,7 +83,6 @@ export default function Home() {
       <p className="text-gray-400 mb-8">
         Enter a git repository to analyze its functions.
       </p>
-
       <div className="flex gap-3 mb-6">
         <input
           type="text"
@@ -152,7 +102,6 @@ export default function Home() {
           {loading ? "Loading..." : "Load Repository"}
         </button>
       </div>
-
       {error && (
         <div
           className="bg-red-900/30 border border-red-700 rounded-lg px-4 py-3 text-red-400 text-sm mb-6"
@@ -161,30 +110,186 @@ export default function Home() {
           {error}
         </div>
       )}
-
-      {tree && (
-        <div
-          className="bg-gray-900 border border-gray-800 rounded-lg p-4"
-          data-testid="file-tree"
-        >
-          <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-800">
-            <span className="text-green-400 font-semibold">{repoName}</span>
-            <span className="text-gray-600 text-sm">
-              — {countFunctions(tree)} functions found
-            </span>
-          </div>
-          <FileTree nodes={tree} />
-        </div>
-      )}
     </main>
   );
 }
 
-function countFunctions(nodes: FileNode[]): number {
-  let count = 0;
-  for (const node of nodes) {
-    if (node.functions) count += node.functions.length;
-    if (node.children) count += countFunctions(node.children);
+// ============================================================
+// Pipeline View
+// ============================================================
+
+function PipelineView({
+  tree,
+  repoName,
+}: {
+  tree: FileNode[];
+  repoName: string;
+}) {
+  const [selected, setSelected] = useState("");
+  const [selectedFile, setSelectedFile] = useState("");
+  const [codeTab, setCodeTab] = useState<"source" | "tests">("source");
+  const [bottomTab, setBottomTab] = useState<"status" | "agents">("status");
+  const [sourceCode, setSourceCode] = useState("");
+  const [functions] = useState<FunctionStatus[]>(() => flattenFunctions(tree));
+
+  const handleSelectFunction = async (name: string, file: string) => {
+    setSelected(name);
+    setSelectedFile(file);
+    setCodeTab("source");
+    try {
+      const res = await fetch(
+        `${BACKEND_URL}/api/repo/file/${encodeURIComponent(file)}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setSourceCode(data.content);
+      }
+    } catch {
+      setSourceCode("// Failed to load file");
+    }
+  };
+
+  return (
+    <div className="h-screen flex flex-col bg-gray-950 text-gray-100">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-gray-900">
+        <div className="flex items-center gap-3">
+          <h1 className="text-sm font-bold">FV Pipeline</h1>
+          <span className="text-xs text-gray-500">{repoName}</span>
+          <span className="text-xs text-green-400">
+            {countFunctions(tree)} functions
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500" data-testid="budget-display">
+            Budget: $0.00 / $2.00
+          </span>
+          <button
+            className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs font-medium"
+            data-testid="generate-button"
+          >
+            Generate Specs
+          </button>
+        </div>
+      </div>
+
+      {/* Top half: file tree + code */}
+      <div className="h-1/2 flex overflow-hidden">
+        <div
+          className="w-56 border-r border-gray-800 overflow-y-auto bg-gray-900/50 py-2"
+          data-testid="file-tree"
+        >
+          <FileTree
+            nodes={tree}
+            selected={selected}
+            onSelect={handleSelectFunction}
+          />
+        </div>
+
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex border-b border-gray-800 bg-gray-900/30">
+            {(["source", "tests"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setCodeTab(tab)}
+                className={`px-4 py-1.5 text-xs font-medium capitalize border-b-2 transition-colors ${
+                  codeTab === tab
+                    ? "border-blue-500 text-blue-400"
+                    : "border-transparent text-gray-500 hover:text-gray-300"
+                }`}
+                data-testid={`tab-${tab}`}
+              >
+                {tab}
+              </button>
+            ))}
+            {selected && (
+              <div className="ml-auto px-3 py-1.5 text-xs text-gray-600 font-mono">
+                {selected} — {selectedFile}
+              </div>
+            )}
+          </div>
+
+          <div
+            className="flex-1 overflow-auto bg-gray-950"
+            data-testid="code-panel"
+          >
+            {sourceCode && codeTab === "source" ? (
+              <CodeViewer code={sourceCode} />
+            ) : codeTab === "tests" ? (
+              <div className="p-4 text-gray-500 text-sm">
+                No tests generated yet. Click &quot;Generate Specs&quot; to
+                start the pipeline.
+              </div>
+            ) : (
+              <div className="p-4 text-gray-500 text-sm">
+                Select a function from the file tree to view its source code.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom half: status / agents */}
+      <div className="h-1/2 border-t border-gray-800 flex flex-col">
+        <div className="flex border-b border-gray-800 bg-gray-900/30">
+          {(["status", "agents"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setBottomTab(tab)}
+              className={`px-4 py-1.5 text-xs font-medium capitalize border-b-2 transition-colors ${
+                bottomTab === tab
+                  ? "border-blue-500 text-blue-400"
+                  : "border-transparent text-gray-500 hover:text-gray-300"
+              }`}
+              data-testid={`bottom-tab-${tab}`}
+            >
+              {tab === "status" ? "Status" : "Agents & Git"}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-auto">
+          {bottomTab === "status" && (
+            <StatusTable
+              functions={functions}
+              selected={selected}
+              onSelect={(name) => {
+                const fn = functions.find((f) => f.name === name);
+                if (fn) handleSelectFunction(name, fn.file);
+              }}
+            />
+          )}
+          {bottomTab === "agents" && (
+            <div className="p-4 text-gray-500 text-sm">
+              Agent activity will appear here after running the pipeline.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Main
+// ============================================================
+
+export default function Home() {
+  const [loaded, setLoaded] = useState(false);
+  const [tree, setTree] = useState<FileNode[]>([]);
+  const [repoName, setRepoName] = useState("");
+
+  if (loaded) {
+    return <PipelineView tree={tree} repoName={repoName} />;
   }
-  return count;
+
+  return (
+    <RepoInput
+      onLoaded={(t, name) => {
+        setTree(t);
+        setRepoName(name);
+        setLoaded(true);
+      }}
+    />
+  );
 }
