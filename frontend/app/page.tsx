@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FileTree, FileNode } from "@/components/FileTree";
 import { CodeViewer } from "@/components/CodeViewer";
 import { StatusTable, FunctionStatus } from "@/components/StatusTable";
+import { AgentPanel } from "@/components/AgentPanel";
+import { GitGraph } from "@/components/GitGraph";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
@@ -171,7 +173,35 @@ function PipelineView({
   const [pipelineComplete, setPipelineComplete] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
   const [budget, setBudget] = useState({ used: 0, limit: 2.0 });
+  const [conversations, setConversations] = useState<Record<string, any[]>>({});
+  const [gitOps, setGitOps] = useState<any[]>([]);
+  const [agentFn, setAgentFn] = useState("");
   const eventSourceRef = useRef<EventSource | null>(null);
+
+  // Fetch debug data when pipeline completes
+  useEffect(() => {
+    if (!pipelineComplete || !runId) return;
+    (async () => {
+      try {
+        const [convRes, gitRes] = await Promise.all([
+          fetch(`${BACKEND_URL}/api/debug/conversations/${runId}`),
+          fetch(`${BACKEND_URL}/api/debug/git-graph/${runId}`),
+        ]);
+        if (convRes.ok) {
+          const data = await convRes.json();
+          setConversations(data.conversations);
+          const names = Object.keys(data.conversations);
+          if (names.length > 0 && !agentFn) setAgentFn(names[0]);
+        }
+        if (gitRes.ok) {
+          const data = await gitRes.json();
+          setGitOps(data.operations);
+        }
+      } catch (err) {
+        console.error("Failed to fetch debug data:", err);
+      }
+    })();
+  }, [pipelineComplete, runId]);
 
   const handleSelectFunction = async (name: string, file: string) => {
     setSelected(name);
@@ -406,9 +436,28 @@ function PipelineView({
             />
           )}
           {bottomTab === "agents" && (
-            <div className="p-4 text-gray-500 text-sm">
-              Agent activity will appear here after running the pipeline.
-            </div>
+            Object.keys(conversations).length > 0 ? (
+              <div className="flex h-full">
+                <div className="flex-1 border-r border-gray-800 overflow-auto">
+                  <AgentPanel
+                    conversations={conversations}
+                    selectedFn={agentFn}
+                    onSelectFn={setAgentFn}
+                    functionNames={Object.keys(conversations)}
+                  />
+                </div>
+                <div className="w-[480px] overflow-auto">
+                  <div className="text-xs text-gray-500 font-semibold px-3 py-1.5 border-b border-gray-800 uppercase tracking-wide">
+                    Git Graph
+                  </div>
+                  <GitGraph operations={gitOps} />
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 text-gray-500 text-sm">
+                {pipelineComplete ? "Loading agent data..." : "Agent activity will appear here after running the pipeline."}
+              </div>
+            )
           )}
         </div>
       </div>
