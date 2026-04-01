@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { FileTree, FileNode } from "@/components/FileTree";
 import { CodeViewer } from "@/components/CodeViewer";
 import { StatusTable, FunctionStatus } from "@/components/StatusTable";
@@ -118,6 +118,42 @@ function RepoInput({
 // Pipeline View
 // ============================================================
 
+function statusToAction(status: string): string {
+  switch (status) {
+    case "covered": return "merged";
+    case "bug_suspect": return "fix_pr";
+    case "needs_refactor": return "issue";
+    case "test_failed": return "retry";
+    default: return "pending";
+  }
+}
+
+function layerStatus(fnStatus: string, layer: "l1" | "l2" | "l3"): string {
+  const statusOrder = ["pending", "l1_in_progress", "l1_done", "l2_in_progress", "l2_done", "l2_rejected", "l3_in_progress", "l3_done", "l3_failed", "covered", "bug_suspect", "needs_refactor", "test_failed"];
+  const idx = statusOrder.indexOf(fnStatus);
+  if (layer === "l1") {
+    if (idx >= 2) return "done";
+    if (idx === 1) return "processing";
+    return "pending";
+  }
+  if (layer === "l2") {
+    if (fnStatus === "needs_refactor" || fnStatus === "l2_rejected") return "rejected";
+    if (idx >= 4) return "done";
+    if (idx === 3) return "processing";
+    if (idx >= 2) return "pending";
+    return "pending";
+  }
+  if (layer === "l3") {
+    if (fnStatus === "needs_refactor" || fnStatus === "l2_rejected") return "skipped";
+    if (fnStatus === "covered") return "done";
+    if (fnStatus === "bug_suspect" || fnStatus === "test_failed" || fnStatus === "l3_failed") return "failed";
+    if (idx >= 6 && idx <= 7) return "processing";
+    if (idx >= 4) return "pending";
+    return "pending";
+  }
+  return "pending";
+}
+
 function PipelineView({
   tree,
   repoName,
@@ -130,7 +166,12 @@ function PipelineView({
   const [codeTab, setCodeTab] = useState<"source" | "tests">("source");
   const [bottomTab, setBottomTab] = useState<"status" | "agents">("status");
   const [sourceCode, setSourceCode] = useState("");
-  const [functions] = useState<FunctionStatus[]>(() => flattenFunctions(tree));
+  const [functions, setFunctions] = useState<FunctionStatus[]>(() => flattenFunctions(tree));
+  const [pipelineRunning, setPipelineRunning] = useState(false);
+  const [pipelineComplete, setPipelineComplete] = useState(false);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [budget, setBudget] = useState({ used: 0, limit: 2.0 });
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const handleSelectFunction = async (name: string, file: string) => {
     setSelected(name);
@@ -149,6 +190,95 @@ function PipelineView({
     }
   };
 
+  const updateFunctionStatus = useCallback((name: string, updates: Partial<FunctionStatus>) => {
+    setFunctions((prev) =>
+      prev.map((fn) => (fn.name === name ? { ...fn, ...updates } : fn))
+    );
+  }, []);
+
+  const handleGenerate = async () => {
+    setPipelineRunning(true);
+    setPipelineComplete(false);
+
+    // Set all to pending with running action
+    setFunctions((prev) => prev.map((fn) => ({ ...fn, action: "running" })));
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/pipeline/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ budget_limit: 2.0 }),
+      });
+      const data = await res.json();
+      const newRunId: string = data.run_id;
+      setRunId(newRunId);
+
+      // Connect SSE
+      const es = new EventSource(`${BACKEND_URL}/api/pipeline/stream/${newRunId}`);
+      eventSourceRef.current = es;
+
+      es.addEventListener("function_start", (e: MessageEvent) => {
+        const d = JSON.parse(e.data);
+        updateFunctionStatus(d.name, { status: "l1_in_progress", l1: "processing", action: "running" });
+      });
+
+      es.addEventListener("layer_start", (e: MessageEvent) => {
+        const d = JSON.parse(e.data);
+        updateFunctionStatus(d.name, {
+          status: `${d.layer}_in_progress`,
+          [d.layer]: "processing",
+        } as Partial<FunctionStatus>);
+      });
+
+      es.addEventListener("layer_complete", (e: MessageEvent) => {
+        const d = JSON.parse(e.data);
+        updateFunctionStatus(d.name, {
+          [d.layer]: "done",
+        } as Partial<FunctionStatus>);
+      });
+
+      es.addEventListener("function_status", (e: MessageEvent) => {
+        const d = JSON.parse(e.data);
+        const status: string = d.status;
+        updateFunctionStatus(d.name, {
+          status,
+          l1: layerStatus(status, "l1"),
+          l2: layerStatus(status, "l2"),
+          l3: layerStatus(status, "l3"),
+          action: statusToAction(status),
+        });
+      });
+
+      es.addEventListener("budget_update", (e: MessageEvent) => {
+        const d = JSON.parse(e.data);
+        setBudget({ used: d.used, limit: d.limit });
+      });
+
+      es.addEventListener("pipeline_complete", () => {
+        setPipelineRunning(false);
+        setPipelineComplete(true);
+      });
+
+      es.addEventListener("done", () => {
+        es.close();
+        eventSourceRef.current = null;
+        setPipelineRunning(false);
+        setPipelineComplete(true);
+      });
+
+      es.addEventListener("pipeline_error", (e: MessageEvent) => {
+        const d = JSON.parse(e.data);
+        console.error("Pipeline error:", d.error);
+        es.close();
+        setPipelineRunning(false);
+      });
+
+    } catch (err) {
+      console.error("Failed to start pipeline:", err);
+      setPipelineRunning(false);
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col bg-gray-950 text-gray-100">
       {/* Header */}
@@ -159,16 +289,32 @@ function PipelineView({
           <span className="text-xs text-green-400">
             {countFunctions(tree)} functions
           </span>
+          {pipelineRunning && (
+            <span className="text-xs text-blue-400 animate-pulse" data-testid="pipeline-running">
+              Pipeline running...
+            </span>
+          )}
+          {pipelineComplete && (
+            <span className="text-xs text-green-400" data-testid="pipeline-complete">
+              Pipeline complete
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-500" data-testid="budget-display">
-            Budget: $0.00 / $2.00
+            Budget: ${budget.used.toFixed(4)} / ${budget.limit.toFixed(2)}
           </span>
           <button
-            className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs font-medium"
+            onClick={handleGenerate}
+            disabled={pipelineRunning}
+            className={`px-3 py-1 rounded text-xs font-medium ${
+              pipelineRunning
+                ? "bg-gray-700 text-gray-400 cursor-not-allowed"
+                : "bg-green-600 hover:bg-green-500 text-white"
+            }`}
             data-testid="generate-button"
           >
-            Generate Specs
+            {pipelineRunning ? "Running..." : "Generate Specs"}
           </button>
         </div>
       </div>
