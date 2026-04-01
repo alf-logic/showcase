@@ -26,7 +26,7 @@ test.describe("Pipeline SSE", () => {
 
     // Wait for at least one function to get a final status (not pending)
     // This confirms SSE is working
-    await expect(page.locator('[data-testid^="status-row-"] >> text=/covered|bug|refactor|failed/')).toBeVisible({ timeout: 60000 });
+    await expect(page.locator('[data-testid^="status-row-"] >> text=/covered|bug|refactor|failed/').first()).toBeVisible({ timeout: 60000 });
 
     // Wait for pipeline to complete
     await expect(page.getByTestId("pipeline-complete")).toBeVisible({ timeout: 360000 });

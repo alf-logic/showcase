@@ -25,7 +25,7 @@ _pipeline_done: dict[str, bool] = {}
 
 
 class StartRequest(BaseModel):
-    model: str = "gpt-4o-mini"
+    model: str = "mock"
     budget_limit: float = 2.0
 
 

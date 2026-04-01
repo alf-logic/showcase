@@ -46,10 +46,15 @@ def _run_tests(test_code: str, clone_path: str) -> tuple[bool, str]:
 def _classify_failure(test_output: str) -> str:
     """Classify test failure as bug_suspect or test_failed."""
     output_lower: str = test_output.lower()
-    # If assertions failed → the code behaves differently than spec → bug suspect
-    if "assertionerror" in output_lower or "assert" in output_lower:
+    # Runtime errors during test execution → code behaves differently than spec → bug suspect
+    bug_indicators: list[str] = [
+        "assertionerror", "keyerror", "valueerror",
+        "indexerror", "typeerror", "attributeerror", "runtimeerror",
+        "zerodivisionerror", "overflowerror",
+    ]
+    if any(indicator in output_lower for indicator in bug_indicators):
         return "bug_suspect"
-    # Import errors, syntax errors, etc. → test generation issue
+    # Import errors, syntax errors → test generation issue
     return "test_failed"
 
 
